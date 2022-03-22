@@ -1,0 +1,670 @@
+---
+title: "Song Data Project"
+author: "Kristian Abad & Steven Truong"
+date: "2/13/2022"
+output:
+  html_document:
+    code_folding: hide
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,warning = FALSE,message = FALSE)
+```
+
+# Introduction
+
+The purpose of this project is to observe the relationship between the popularity of songs based on its characteristics and generate a model that will predict the song’s popularity based on given characteristics.
+
+# What Are The Characteristics Of Music?
+
+The characteristics of music are the audio features of a song. In our dataset, we were given numeric data for features such as the song’s duration, acousticness, danceability, energy, instrumentalness, key, liveliness, loudness, audio mode, speechiness, tempo, time signature, and audio valence. The combination of these audio features makes up what we hear. According to Spotify APIs, these features can be categorized in which aspect of a song that it can affect:
+
+- Mood: Danceability, Valence, Energy, Tempo
+- Properties: Loudness, Speechiness, Instrumentalness
+- Context: Liveness, Acousticness
+
+We were also given a descriptions and range of unit of each audio feature:
+
+- Duration: The duration of the track in milliseconds.
+
+- Acousticness: A confidence measure from 0.0 to 1.0 of whether the track is acoustic. 1.0 represents high confidence the track is acoustic.
+
+- Danceability: Describes how suitable a track is for dancing based on a combination of musical elements including tempo, rhythm stability, beat                  strength, and overall regularity. A value of 0.0 is least danceable and 1.0 is most danceable.
+
+- Energy: A measure from 0.0 to 1.0 and represents a perceptual measure of intensity and activity. Typically, energetic tracks feel fast,                   loud, and noisy. For example, death metal has high energy, while a Bach prelude scores low on the scale. Perceptual features                      contributing to this attribute include dynamic range, perceived loudness, timbre, onset rate, and general entropy.
+
+- Instrumentalness: Predicts whether a track contains no vocals. "Ooh" and "aah" sounds are treated as instrumental in this context. Rap or spoken                     word tracks are clearly "vocal". The closer the instrumentalness value is to 1.0, the greater likelihood the track contains no                     vocal content. Values above 0.5 are intended to represent instrumental tracks, but confidence is higher as the value                              approaches 1.0.
+
+- Key: The key the track is in. Integers map to pitches using standard Pitch Class notation. E.g. 0 = C, 1 = C♯/D♭, 2 = D, and so on. If no key         was detected, the value is -1.
+
+- Liveliness: Detects the presence of an audience in the recording. Higher liveness values represent an increased probability that the track was                performed live. A value above 0.8 provides strong likelihood that the track is live.
+
+- Loudness: The overall loudness of a track in decibels (dB). Loudness values are averaged across the entire track and are useful for comparing               relative loudness of tracks. Loudness is the quality of a sound that is the primary psychological correlate of physical strength                  (amplitude). Values typically range between -60 and 0 db.
+
+- Mode: Mode indicates the modality (major or minor) of a track, the type of scale from which its melodic content is derived. Major is represented         by 1 and minor is 0.
+
+- Speechiness: Detects the presence of spoken words in a track. The more exclusively speech-like the recording (e.g. talk show, audio book,                      poetry), the closer to 1.0 the attribute value. Values above 0.66 describe tracks that are probably made entirely of spoken words.                Values between 0.33 and 0.66 describe tracks that may contain both music and speech, either in sections or layered, including such                cases as rap music. Values below 0.33 most likely represent music and other non-speech-like tracks.
+
+- Tempo: The overall estimated tempo of a track in beats per minute (BPM). In musical terminology, tempo is the speed or pace of a given piece and          derives directly from the average beat duration.
+
+- Time Signature: An estimated time signature. The time signature (meter) is a notational convention to specify how many beats are in each bar (or                   measure). The time signature ranges from 3 to 7 indicating time signatures of "3/4", to "7/4".
+
+- Valence: A measure from 0.0 to 1.0 describing the musical positiveness conveyed by a track. Tracks with high valence sound more positive (e.g.             happy, cheerful, euphoric), while tracks with low valence sound more negative (e.g. sad, depressed, angry).
+
+
+In addition to the audio feature, the dataset also provided the name of songs and how it ranked in popularity from a range of 0 to 100 (where 0 is the lowest popularity and 100 is the highest popularity).
+
+
+# Why Might The Model Be Useful?
+
+It is in the interest of music artists and companies to produce songs that will rank high in popularity and top the charts. By having some knowledge of what music listeners generally enjoy, artists will be able to incorporate more of what people want and this will lead to a higher success of the song.
+
+
+# Loading Data and Packages
+
+This project uses data from Kaggle.com and the Spotify API. The data set contains about 13070 songs title, popularity score, audio features.
+
+```{r message=FALSE, warning=FALSE}
+
+library(readr)
+library(tidyr)
+library(tidyverse)
+library(ggplot2)
+library(dplyr)
+library(class)
+library(FNN)
+library(glmnet)
+
+```
+
+
+# Data Cleaning
+
+When observing the raw dataset, we saw that they are multiple songs that are repeated. We assumed that there was some error in the raw data, so we decided to get rid of the duplicate. However, some songs have the same title, but they have different popularity scores and audio features values. We decided to leave those data assuming that they are remixes.
+```{r}
+data = read_csv("data/song_data.csv")
+head(data)
+```
+One challenge we need to figure out is addressing the following cases in our data, if there are any:\
+
+* Remixes
+* Remasters
+* Single Versions
+* Same name but different artists?
+* Radio edits
+* Extended versions
+* Misc mixes/versions
+\
+I think maybe we can leave remixes possibly treating them as reimaginings of songs or somewhat to the same vein that songs have samples from other tracks are in themselves a separate track. Maybe the more difficult is dealing with the other cases. An example that comes to mind is "Smooth Operator" by Sade (seems like only one of the 3 versions is in the data). There's a single version, a remastered version, and I believe an album version where there's an immediate difference between the remastered and album version.
+\
+I think the duplicated() function finds exact duplicates of rows.
+```{r}
+duplicates <- data[duplicated(data),]
+duplicates
+```
+Just testing some cases here...while scrolling through on kaggle, I just picked a random duplicate song to test
+```{r}
+
+duplicates %>%
+  filter(song_name == 'Zombie')
+```
+Here's an interesting case where we have 2 of the same rows and 1 with a remix with a track called "8 Letters"
+```{r}
+duplicates %>%
+  filter(song_name == '8 Letters')
+
+duplicates %>%
+  filter(song_name == '8 Letters - R3HAB Remix')
+```
+So it looks like it just picks up exact duplicates and we'll need to figure out what we're going to do with other cases.
+```{r}
+data_2 <- data[!duplicated(data),]
+nrow(data)
+nrow(data_2)
+
+nrow(data) - nrow(data_2)
+```
+Using the grepl function to find any instance of single,remastered, and radio edit/mix versions of tracks. 
+```{r}
+#Function was found via stackoverflow
+#https://stackoverflow.com/questions/10128617/test-if-characters-are-in-a-string
+data_3 <- data_2[!(grepl('Single',data_2$song_name,fixed=TRUE) |
+                 grepl('Remaster',data_2$song_name,fixed=TRUE) |
+                 grepl('Radio',data_2$song_name,fixed=TRUE)),]
+data_3
+```
+Checking for missing values
+```{r}
+data_3[is.na(data_3)]
+```
+```{r}
+#data_3[grepl('Swimming Pools (Drank)',data_3$song_name,fixed=TRUE),]
+
+
+#This is the only entry for this song in the dataset
+#data_3[grepl("Wouldn't It Be Nice",data_3$song_name,fixed=TRUE),]
+#nrow(data_3)
+data_4 <- data_3[!(grepl('Mix',data_3$song_name,fixed=TRUE) | 
+       grepl('Version',data_3$song_name,fixed=TRUE)),]
+data_4
+```
+
+# Train/Test Split
+
+Here we do a 80% random split for the training set and save the remaining 20% for the test 20%.\
+```{r}
+set.seed(131)
+train_1 = sample(1:nrow(data_4), 11240)
+music.train = data_4[train_1,]
+music.test = data_4[-train_1,]
+
+cat('Rows in training set:',nrow(music.train),'\n')
+cat('Rows in test set: ',nrow(music.test),'\n')
+```
+# Exploratory Data Analysis
+
+```{r}
+plot(music.train$danceability,music.train$song_popularity)
+plot(music.train$energy,music.train$song_popularity)
+plot(music.train$energy,music.train$danceability)
+```
+\
+When it comes to plotting song popularity against some of the other variables such as danceability and energy, there doesn't appear to be any immediate relationship but when it comes to plotting danceability versus energy, there appears to be some quadratic relationship among the variables.
+\
+
+# Linear Regression
+
+We decided to make a histogram graph of the Popularity of our songs to observe where most of the songs were ranked in term of Popularity
+
+```{r}
+ggplot(music.train, aes(song_popularity)) +
+  geom_histogram(bins = 70, color = "white") +
+  labs(
+    title = "Histogram of Song Popularity"
+  )
+```
+From this, we observed that most song popularity are rated in the middle where the scores are around 50 to 60 out of 100. We also see that not many songs get a score above a score of 90 out of 100. We see that there a lot more songs that are rated low popularity. We will now continue to observe the different audio features of the songs individually to see any relationship between it and the song's popularity.
+
+
+Diagnostics Test
+
+Since we do not have any categorical value, we have to observed each features individually against the song popularity. We will perform the diagnostic test for these individuals features and also observe the p-value to see if there is any significant relationship between the individual features and the popularity. 
+
+- Linearity: evaluated by the Residuals vs Fitted plot (want horizontal line to follow assumption)
+- Normality: evaluated by the Normal Q-Q plot  (want y = x line to follow assumption)
+- Homoscedasticity: evaluated by the Scale-location plot (want horizontal line to follow assumption)
+- Influential cases (outlier): evaluated by the Residuals vs Leverage (want horizontal line to follow assumption)
+
+
+From the diagnostic test, we observed that most of the predictors generally follow the assumption of linearity, normality, homoscedasticity, and influential cases. Since we also built a linear model for each individual audio feature compared to the song popularity. If we were to look at the p-value of 0.05 significant level then we see that speech, key, and energy is not significant to affect the song popularity if we cannot reject null hypothesis. Now, we will built a linear model with all the significant characteristics to see if the significant of the features changes when combined with other audio features.
+
+```{r}
+mod_all = lm(music.train$song_popularity ~ music.train$acousticness + music.train$danceability + music.train$instrumentalness + music.train$liveness + music.train$loudness + music.train$tempo + music.train$energy + music.train$key + music.train$speechiness)
+summary(mod_all)
+```
+After building a model that take into consideration of all the audio features, we see that key and speechiness is still not significant to the variation of the song popularity at a 0.05 significant level. However, we see that energy is now significant to the variation of the song popularity at a 0.05 significant level. Now, we will built a new linear model where it would only take into consideration of audio features that is significant in the variation of song popularity. In this model, we decided to take out speechiness and key.
+
+
+```{r}
+FinalLinearMod = lm(music.train$song_popularity ~ music.train$acousticness + music.train$danceability + music.train$instrumentalness + music.train$liveness + music.train$loudness + music.train$tempo + music.train$energy)
+summary(FinalLinearMod)
+AIC(FinalLinearMod)
+BIC(FinalLinearMod)
+```
+The predictors of final model seem to have p-values < 0.05. From this we can establish the relationship between the predictors/characteristics and response in the mathematical formula:
+
+Popularity = 61.278308 + -3.052667*acousticness + 3.706776*danceability + -6.152911*instrumentalness + -4.754466*liveness + 0.430241*loudness + -0.017345*tempo + -11.106924*energy
+
+
+From this model, we see that danceability and the y intercept is the only positive numbers that increase the value of popularity. However, we see from the data set that loudness is measured in a negative values, so it also technically a positive number that would increased the value of popularity. For the other predictors, if the value is too high, then it would decrease the value of popularity.
+
+
+However, we noticed that our R-squared and adjusted squared value is relatively low, which might indicate that our independent variable is not explaining much in variation of our dependent variable. The Akaike Information Criterion (AIC) is a mathematical method that evaluates how well a model fits the data it was generated from. This AIC is beneficial in comparing different possible models and determine which is best fit for the data, so lower AIC is better. The Baysian Information Criteria (BIC) estimate the likelihood of a model to predict and so lower value would be better. However, our model have extremely high value AIC = 99494.58 and BIC = 99560.52, which mean our model is not fit for the data.
+
+```{r}
+mse = mean(FinalLinearMod$residuals^2)
+mse
+```
+The MSE of our model is also very high. Since AIC, BIC, and MSE values are relatively high, we conclude that linear regression might not be the best model for predicting the popularity of songs. However, we continue to try predict music popularity with our final model.
+
+
+Predicting Linear Models
+
+```{r}
+PopularityPredict = predict(FinalLinearMod, music.test)
+ggplot(music.train, aes(PopularityPredict)) +
+  geom_histogram(bins = 70, color = "white") +
+  labs(
+    title = "Histogram of Song Popularity Prediction"
+  )
+```
+We see that the prediction of song is mostly around 50 out of 100, which is a less than our Song's Popularity plot of data from earlier where most of the score is around 50 to 60 out of 100. However, the results are very similar to the plot of predictions is very similar to the orginal raw data plot in terms of having most of the song scored in the 50 out of 100 area.
+
+
+
+```{r}
+different_pred = data.frame(cbind(actuals = music.test$song_popularity, predicteds = PopularityPredict))
+correlation_accuracy = cor(different_pred)
+correlation_accuracy
+```
+We see that our predicted values and the test values have a very low correlation accuracy with a 0.1% accuracy. 
+
+
+
+#Variation of Linear Regression
+
+Rigdge Regression
+
+We decided to observe a subset of our data set of size n/2. Here, we split that data set into training and testing data set.
+
+```{r}
+set.seed(1)
+train = sample(1:nrow(data_4), nrow(data_4)/2)
+test = (-train)
+x = model.matrix(song_popularity ~ acousticness + danceability + instrumentalness + liveness + loudness + tempo + energy + key + speechiness, data_4)
+y = data_4$song_popularity
+x.train=x[train,]
+y.train=y[train]
+x.test=x[test,]
+y.test=y[test]
+```
+
+
+Cross Validation to choose the Best Tuning Parameter
+
+Instead of choosing a random lamda, we are going to use cross-validation to choose the tuning parameter lamda. We decided to do 5 folds because it was faster and similar to the result we got when we did 10 folds.
+
+```{r}
+set.seed(1)
+cv.out.ridge=cv.glmnet(x.train, y.train, alpha = 0, nfolds = 5)
+plot(cv.out.ridge)
+abline(v = log(cv.out.ridge$lambda.min), col="red", lwd=3, lty=2)
+```
+The plot is showing the trend of mse according to our list of lamda. Our goal is to find the lamda that would give the lowest mse.
+
+
+```{r}
+bestlam = cv.out.ridge$lambda.min
+bestlam
+```
+The best lamda that will result in the smallest cross-validation error is 0.4132726. Now, we will try to find the MSE using the lamda value that we found. We decided to use the list of lamda from our homework 3.
+
+
+```{r}
+lambda.list.ridge = 1000 * exp(seq(0, log(1e-5), length = 100))
+#lambda.list.ridge =  10^seq(10, -2, length = 100)
+ridge.mod=glmnet(x.train,y.train,alpha=0,lambda = lambda.list.ridge)
+```
+
+The ridge testing MSE w/ best lamda
+```{r}
+ridge.pred=predict(ridge.mod,s=bestlam ,newx=x[test,])
+mean((ridge.pred-y.test)^2)
+```
+The ridge testing MSE with best lamda is 409.1103
+
+The ridge training MSE w/ best lamda
+```{r}
+ridge.pred=predict(ridge.mod,s=bestlam ,newx=x[train,])
+mean((ridge.pred-y.train)^2)
+```
+The ridge training MSE with best lamda is 408.7107
+
+We see that the MSE values are similar to the ones that we got with the linear regression.
+
+The coefficients
+```{r}
+out = glmnet(x, y, alpha = 0, lamda = lambda.list.ridge)
+predict(out,type="coefficients",s=bestlam)
+```
+From the coefficient, we see that none of them are zero since ridge regression does not perform variable selection. Hence, we will now perform the laso regression since it has a feature that will set many of the coefficient estimate to zero. This is useful to see if the predictors are associated with the response, in our case, if whether the audio features are associated to the song's popularity.
+
+The Laso
+
+```{r}
+lasso.mod <- glmnet(x.train, y.train, alpha=1, lambda=lambda.list.ridge)
+plot(lasso.mod, xvar="lambda", label = TRUE)
+```
+
+
+We will now perform cross validation to find the best lamda and the MSE just like we did for ridge regression.
+
+```{r}
+set.seed(1)
+cv.out.lasso = cv.glmnet(x.train, y.train, alpha = 1)
+plot(cv.out.lasso)
+abline(v = log(cv.out.lasso$lambda.min), col="red", lwd=3, lty=2)
+```
+The plot is showing the trend of mse according to our list of lamda. Our goal is to find the lamda that would give the lowest mse.
+
+
+```{r}
+bestlam_laso = cv.out.lasso$lambda.min
+bestlam_laso
+```
+The best lamda value for the laso regression to give the smallest MSE is 0.004229973
+
+The laso testing MSE w/ best lamda
+```{r}
+lasso.pred = predict(lasso.mod, s = bestlam_laso, newx = x[test,])
+mean((lasso.pred-y.test)^2)
+```
+The laso testing MSE with best lamda is 409.0363
+
+The laso training MSE w/ best lamda
+```{r}
+lasso.pred = predict(lasso.mod, s = bestlam_laso, newx = x[train,])
+mean((lasso.pred-y.train)^2)
+```
+The laso training MSE with best lamda is 408.6969
+
+We see that the testing and training mse is similar to what we got in the linear regression and and ridge regression. We will now check the coefficient to see if whether any of them became zero. The coefficient that becomes 0 means that it have no/less assocaition to the resposne.
+
+The Coefficient
+```{r}
+out=glmnet(x,y,alpha=1,lambda=lambda.list.ridge)
+lasso.coef=predict(out,type="coefficients",s=bestlam_laso)
+lasso.coef
+```
+
+None of the coefficients became zero, this means all the variables are associated with the response. However, we see that coefficient for key is extremely small. 
+
+
+# k-Nearest Neighbors regression
+
+
+Training/Testing split
+
+```{r}
+Popularity_reg = data_4 %>%
+  select(song_popularity, song_duration_ms, acousticness, danceability, energy, instrumentalness, liveness, loudness, speechiness, tempo,      audio_valence)
+set.seed(123)
+train = sample(1:nrow(Popularity_reg), 11240)
+train.kreg = Popularity_reg[train,]
+test.kreg = Popularity_reg[-train,]
+y.train_kreg = train.kreg$song_popularity
+x.train_kreg = train.kreg %>% select(-song_popularity) %>% scale(center = TRUE, scale = TRUE)
+y.test_kreg = test.kreg$song_popularity
+x.test_kreg = test.kreg %>% select(-song_popularity) %>% scale(center = TRUE, scale = TRUE)
+```
+
+We performed cross-validation that in a range of 1 to 100 and found that 47 is the best k value that would offer the lowest MSE. Hence, we will now proceed to find the training and testing MSE of the k-Nearest Neighbors regression.
+
+
+Training MSE
+
+```{r}
+set.seed(12)
+pred.y.train_kreg = knn.reg(train = x.train_kreg, test = x.train_kreg, y = y.train_kreg, k = 47)
+mean((pred.y.train_kreg$pred - y.train_kreg)^2)
+```
+The training MSE for knn regression is 390.5383
+
+
+Testing MSE
+
+```{r}
+set.seed(13)
+pred.y.test_kreg = knn.reg(train = x.train_kreg, test = x.test_kreg, y = y.train_kreg, k = 47)
+mean((pred.y.test_kreg$pred - y.test_kreg)^2)
+```
+The testing MSE for knn regression is 400.0915
+
+
+We see that the mse of knn regression is still relatively high, but it is lower than the linear regression model.
+
+# Single decision tree
+```{r}
+library(tree)
+```
+
+
+```{r}
+set.seed(131)
+tree.music <- tree(song_popularity ~ . , data_4, subset=train_1)
+summary(tree.music)
+```
+\
+Plotting the tree
+```{r}
+plot(tree.music)
+text(tree.music, pretty = 0)
+```
+\
+Here we can see that the single tree does a split specifically on the instrumentalness of a track and assigns a weight based off the range of being less than or greater than 0.000009595. We'll try to improve performance of this tree by pruning the tree below:\
+```{r, warning=FALSE}
+cv.music <- cv.tree(tree.music)
+```
+
+```{r}
+plot(cv.music$size, cv.music$dev, type = "b")
+```
+\
+Based off the above graph we see that the best size of the tree that gives the lowest cross-validation test error rate is 2 and so we'll keep the tree with this size. Now let's evaluate how this tree performs by calculating the test MSE.\
+
+```{r}
+yhat.tree <- predict(tree.music, newdata = data_4[-train_1,])
+plot(yhat.tree, music.test$song_popularity)
+abline(0,1)
+mean((yhat.tree - music.test$song_popularity)^2)
+```
+Here we see 2 values from our single tree predictions where the data points lie for each value in the test set so it's consistent with the 2 nodes from our tree. Let's see if we can improve model performance with another model, bagging and then we'll move onto random forests!\
+
+# Bagging/Random Forest
+\
+Here we're going to try building a random forest model but first we need the randomForest package.
+```{r}
+library(randomForest)
+```
+\
+Here we build our first bagging model:
+\
+```{r}
+set.seed(131)
+#Perform bagging
+bag.music <- randomForest(song_popularity ~ . , data = data_4, mtry=ncol(data_4) - 1,
+                          importance=TRUE,subset=train_1)
+bag.music
+```
+```{r}
+yhat.bag <- predict(bag.music , newdata = data_4[-train_1,])
+music.test.Y <- music.test$song_popularity
+plot(yhat.bag, music.test.Y)
+abline (0, 1)
+cat('MSE:',mean((yhat.bag - music.test.Y)^2))
+```
+\
+Based off the graph, it looks like we our bagged model is underestimating by about a popularity score of around 20 which matches our test MSE which is still pretty high for bagging. Still we see a 4% increase in performance compared to our single tree model. Let's keep tuning our model with the number of predictors to use with random forests by starting with the a third or the default amount set for the randomForest function.\
+
+```{r}
+set.seed(131)
+#Here we create a random forest where we let mtry = p/3 or 14/3 or the default value
+rf.music <- randomForest(song_popularity ~ . , data = data_4,
+                          importance=TRUE,subset=train_1)
+rf.music
+```
+
+```{r}
+yhat.rf <- predict(rf.music , newdata = data_4[-train_1,])
+plot(yhat.rf, music.test.Y)
+abline (0, 1)
+cat('MSE:',mean((yhat.rf - music.test.Y)^2))
+```
+\
+Checking the test set vs our predictions as we did with bagging and we still get a cluster of data points around the same area and so similar MSE. Here we tweak the number of variables for the random forest model to choose from in the splits\
+```{r}
+set.seed(131)
+#Here we create a random forest where we let mtry = 6
+rf.music2 <- randomForest(song_popularity ~ . , mtry = 6,data = data_4,
+                          importance=TRUE,subset=train_1)
+rf.music2
+```
+
+```{r}
+yhat.rf2 <- predict(rf.music2 , newdata = data_4[-train_1,])
+plot(yhat.rf2, music.test.Y)
+abline (0, 1)
+cat('MSE:',mean((yhat.rf2 - music.test.Y)^2))
+```
+
+\
+With the MSE being more or less the same for bagging as it is in random forest, we will look to other methods but let's analyze some of the predictors used in the model such as the increase in MSE for each variable.\
+
+```{r}
+importance(rf.music)
+```
+```{r}
+varImpPlot(bag.music)
+varImpPlot(rf.music)
+varImpPlot(rf.music2)
+```
+\
+Based off these plots we see the MSE increase with certain variables compared to others, namely, energy, instrumentalness, loudness, acousticness, audio_valence, and danceability. Both the bagging and random forest models share similar significant variables in the percent increase in mse such as instrumentalness, energy, and loudness. The node purity tells us how much a split with that variable reduces MSE and it looks like there the bagged and random forest model have similar variables namelly loudness, song duration, valence, and acousticness.\
+
+# Boosted trees
+
+```{r}
+library(gbm)
+```
+\
+Here we build the first boosted tree model with a default shrinkage term of 0.1 to start off this section.\
+```{r}
+set.seed(131)
+boost.music <- gbm(song_popularity ~ . - song_name, data=data_4[train_1,],
+                   distribution = "gaussian", 
+                   n.trees=5000,
+                   interaction.depth = 4)
+```
+
+```{r}
+summary(boost.music)
+```
+\
+We see the most important variables according to the boosted model is loudness, tempo, and song duration in milliseconds. Let's take a look at the partial dependence for these 3 variables:
+```{r}
+plot(boost.music, i = 'loudness')
+plot(boost.music, i = 'tempo') 
+plot(boost.music, i = 'song_duration_ms')
+```
+\
+These plots are the respective variables in relation to the response, song popularity, with all other variables factored out. There doesn't appear to be a general pattern or trend integrating the other variables out for loudness, tempo, and song duration. It mostly looks like a lot of oscillations or noise but we see a little bit of an upward trend but not much for loudness.\
+
+```{r}
+yhat.boost <- predict(boost.music , newdata = data_4[-train_1,],n.trees = 5000)
+plot(yhat.boost, music.test.Y)
+abline (0, 1)
+cat('MSE:',mean((yhat.boost - music.test.Y)^2))
+```
+\
+Let's build another boosted tree model and tweak the shrinkage term a little bit.\
+```{r}
+set.seed(131)
+boost.music2 <- gbm(song_popularity ~ . - song_name, data=data_4[train_1,],
+                   distribution = "gaussian", 
+                   n.trees=5000,
+                   interaction.depth = 4,
+                   shrinkage = 0.2, verbose = F)
+yhat.boost2 <- predict(boost.music2 , newdata = data_4[-train_1,],n.trees = 5000)
+cat('MSE:',mean((yhat.boost2 - music.test.Y)^2))
+```
+\
+Hmmm it seems our MSE is increasing with the past 2 models, let's try tuning the shrinkage parameter and see if that helps. Here we'll try $\lambda = 0.001$
+
+```{r}
+set.seed(131)
+boost.music3 <- gbm(song_popularity ~ . - song_name, data=data_4[train_1,],
+                   distribution = "gaussian", 
+                   n.trees=5000,
+                   interaction.depth = 4,
+                   shrinkage = 0.001, verbose = F)
+yhat.boost3 <- predict(boost.music3 , newdata = data_4[-train_1,],n.trees = 5000)
+cat('MSE:',mean((yhat.boost3 - music.test.Y)^2))
+```
+\
+We got an improvement for the MSE that relative to the other boosted trees is big but is still high. Let's increase the number of trees to 15,000.\
+
+```{r}
+set.seed(131)
+boost.music4 <- gbm(song_popularity ~ . - song_name, data=data_4[train_1,],
+                   distribution = "gaussian", 
+                   n.trees=15000,
+                   interaction.depth = 4,
+                   shrinkage = 0.001,
+                   verbose = F)
+yhat.boost4 <- predict(boost.music4 , newdata = data_4[-train_1,],n.trees = 15000)
+cat('MSE:',mean((yhat.boost4 - music.test.Y)^2))
+```
+\
+We see that the the MSE is slightly getting lower with each addition of 5000 trees.
+```{r}
+set.seed(131)
+boost.music6 <- gbm(song_popularity ~ . - song_name, data=data_4[train_1,],
+                   distribution = "gaussian", 
+                   n.trees=30000,
+                   interaction.depth = 4,
+                   shrinkage = 0.001,
+                   verbose = F)
+yhat.boost6 <- predict(boost.music6 , newdata = data_4[-train_1,],n.trees = 30000)
+cat('MSE:',mean((yhat.boost6 - music.test.Y)^2))
+```
+\
+This is about as good a test MSE we can get. Now let's tune the interaction depth or the number of splits from a single node and see if there's any performance improvements since the default is 1.
+```{r}
+set.seed(131)
+boost.music7 <- gbm(song_popularity ~ . - song_name, data=data_4[train_1,],
+                   distribution = "gaussian", 
+                   n.trees=30000,
+                   interaction.depth = 6,
+                   shrinkage = 0.001,
+                   verbose = F)
+yhat.boost7 <- predict(boost.music7 , newdata = data_4[-train_1,],n.trees = 30000)
+cat('MSE:',mean((yhat.boost7 - music.test.Y)^2))
+```
+```{r}
+set.seed(131)
+boost.music8 <- gbm(song_popularity ~ . - song_name, data=data_4[train_1,],
+                   distribution = "gaussian", 
+                   n.trees=30000,
+                   interaction.depth = 8,
+                   shrinkage = 0.001,
+                   verbose = F)
+yhat.boost8 <- predict(boost.music8 , newdata = data_4[-train_1,],n.trees = 30000)
+cat('MSE:',mean((yhat.boost8 - music.test.Y)^2))
+```
+\
+Increasing interaction depth seems to make our test MSE slightly bigger so we'll stick with boost.music6 being our best model for this section. Let's see what variables are of importance and the marginal dependence of those variables are:\
+
+```{r}
+summary(boost.music6)
+```
+```{r}
+plot(boost.music6, i = 'loudness')
+plot(boost.music6, i = 'liveness')
+```
+\
+Viewing these plots, there isn't too much of a relationship on the response as we see with the oscillation and again we see a more pronounced upward trend with respect to the loudness variable and looks similar to our first boosted model. Other than that, liveness doesn't seems to capture a general trend or pattern in the data relative to the response which sort of goes on to explain our average error of about 20.
+
+# Best Model
+\
+
+Our best model was a boosted tree model of 30,000 trees, an interaction depth of 4, and a shrinkage term of 0.001. The test mean square error turned out to be relatively the same compared to our other models coming in at 391.9061.\
+
+# What might have been Wrong?
+\
+  A possible answer is that some of the explanatory variables might not have been as relevant as we thought they potentially could have been. For example, in the final boosted tree model the most important predictor seemed to be loudness and liveness which isn’t thought to be what an individual considers when playing a song, an aspect that contributes to a song’s popularity. A lot of the variables in the dataset are coming from a more technical standpoint when more relevant variables could have been genre, year, likes, number of times played, monthly listeners of an artist, shares, global ranking, mood of a track (new feature in Spotify wrapped). If we had access to variables such as these, we think not only would they be more relevant but they could potentially prove to be a more interesting exploration. In retrospect, some of the variables that appeared to have some relevance such as danceability, energy, and tempo can only really go so far to explain a song’s popularity considering that there’s a whole range of moods and settings that would merit a song being played such as studying with low fidelity or “lofi” music and adding atmosphere with soundtracks from movies or shows just to name a few. Other variables such as the possibly more relevant ones mentioned, could account for these cases. Another point is that it could be that these variables come “after the fact” of a track’s popularity opposed to beforehand. A popular track may just so happen to have certain values for energy, speechiness, and all the other variables opposed to the values of variables outright determining a song’s popularity.\
+  
+# Summary
+\
+  Compared to the worst performing model, one of the earlier boost tree models (boosted.music2), we achieved a 24.12% performance increase over the single tree model based off the test mean square error. Our other models however were more or less performing about the same across all of them (linear regression, ridge regression, lasso regression, knn, single tree, bagging, random forest, boosted trees) and so our results are nothing too spectacular. We think that some of the variables weren’t as relevant as we initially thought they could have been in predicting song popularity, a variable that itself is based on the amount of plays and how recent those plays are which would explain the performance on variables that more so have to do with the technical aspects of a track opposed to more commonplace variables such as number of plays, genre, etc. It could be possible that a more fitting prediction of the data would be to see how technical variables may explain other technical variables as pointed out in the exploratory data analysis there appeared to be some relationship between danceability and energy. Setting aside popularity, there could be other relationships within the data to be explored.
+\
+
+
+
+
+
+
+
+
+
+
+
